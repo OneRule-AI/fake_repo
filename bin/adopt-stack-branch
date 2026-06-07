@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/adopt-stack-branch <new-branch> <base-branch>
+
+Run this inside a newly-created Conductor workspace. It makes the workspace's
+branch start from <base-branch>, then tracks <new-branch> as stacked on
+<base-branch> in Git Spice.
+USAGE
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+new_branch="${1:-}"
+base_branch="${2:-}"
+
+[[ -n "$new_branch" && -n "$base_branch" ]] || {
+  usage
+  exit 1
+}
+
+[[ "$new_branch" != "$base_branch" ]] || die "new branch must differ from base branch"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository"
+
+gs_cmd="$(command -v gs || command -v git-spice || true)"
+[[ -n "$gs_cmd" ]] || die "Git Spice is not installed; install it first with: brew install git-spice"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  die "workspace is not clean; commit, stash, or discard changes before adopting the stack branch"
+fi
+
+if ! git rev-parse --verify --quiet "${base_branch}^{commit}" >/dev/null; then
+  remote="${base_branch%%/*}"
+  ref="${base_branch#*/}"
+
+  if [[ "$base_branch" == */* ]] && git remote get-url "$remote" >/dev/null 2>&1; then
+    git fetch "$remote" "$ref"
+  fi
+fi
+
+git rev-parse --verify --quiet "${base_branch}^{commit}" >/dev/null ||
+  die "base branch not found: ${base_branch}"
+
+current_branch="$(git branch --show-current)"
+[[ -n "$current_branch" ]] || die "detached HEAD is not supported"
+
+if git rev-parse --verify --quiet "refs/heads/${new_branch}" >/dev/null; then
+  if [[ "$current_branch" != "$new_branch" ]]; then
+    die "branch already exists and is not checked out here: ${new_branch}"
+  fi
+
+  git reset --hard "$base_branch"
+else
+  git switch -c "$new_branch" "$base_branch"
+fi
+
+if git rev-parse --verify --quiet "refs/spice/data:branches/${new_branch}" >/dev/null 2>&1; then
+  echo "Git Spice already tracks ${new_branch}."
+else
+  "$gs_cmd" branch track "$new_branch" --base "$base_branch"
+fi
+
+echo
+echo "Ready:"
+echo "  branch: ${new_branch}"
+echo "  base:   ${base_branch}"

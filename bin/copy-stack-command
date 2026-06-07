@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/copy-stack-command <new-branch> [base-branch]
+
+Copies a command to the macOS clipboard. Paste that command in a newly-created
+Conductor workspace to move it onto <new-branch>, starting from [base-branch],
+and track the relationship with Git Spice.
+
+If [base-branch] is omitted, the current branch is used.
+USAGE
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+new_branch="${1:-}"
+base_branch="${2:-$(git branch --show-current)}"
+
+[[ -n "$new_branch" ]] || {
+  usage
+  exit 1
+}
+
+[[ -n "$base_branch" ]] || die "could not determine base branch; pass it explicitly"
+[[ "$new_branch" != "$base_branch" ]] || die "new branch must differ from base branch"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository"
+git rev-parse --verify --quiet "${base_branch}^{commit}" >/dev/null ||
+  die "base branch not found: ${base_branch}"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  die "current workspace has uncommitted changes; commit part 1 before stacking"
+fi
+
+command=$(printf 'bin/adopt-stack-branch %q %q' "$new_branch" "$base_branch")
+printf '%s\n' "$command" | pbcopy
+
+echo "Copied to clipboard:"
+echo "  ${command}"
+echo
+echo "Paste it in the newly-created Conductor workspace."
